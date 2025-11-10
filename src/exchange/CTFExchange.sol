@@ -9,6 +9,7 @@ import { Trading } from "./mixins/Trading.sol";
 import { Registry } from "./mixins/Registry.sol";
 import { Pausable } from "./mixins/Pausable.sol";
 import { Signatures } from "./mixins/Signatures.sol";
+import { UserPausable } from "./mixins/UserPausable.sol";
 import { AssetOperations } from "./mixins/AssetOperations.sol";
 
 import { BaseExchange } from "./BaseExchange.sol";
@@ -28,6 +29,7 @@ contract CTFExchange is
     Hashing("Polymarket CTF Exchange", "2"),
     Registry,
     Signatures,
+    UserPausable,
     Trading
 {
     constructor(address _collateral, address _ctf, address _proxyFactory, address _safeFactory)
@@ -108,5 +110,11 @@ contract CTFExchange is
     /// @param conditionId  - The CTF conditionId
     function registerToken(uint256 token, uint256 complement, bytes32 conditionId) external onlyAdmin {
         _registerToken(token, complement, conditionId);
+    }
+
+    /// @notice Sets the user pause block interval
+    /// @param _interval - The new user pause block interval
+    function setUserPauseBlockInterval(uint256 _interval) external onlyAdmin {
+        _setUserPauseBlockInterval(_interval);
     }
 }

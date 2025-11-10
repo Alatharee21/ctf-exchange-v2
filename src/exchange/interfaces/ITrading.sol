@@ -4,17 +4,13 @@ pragma solidity <0.9.0;
 import { OrderStatus, Order } from "../libraries/Structs.sol";
 
 interface ITradingEE {
-    error NotOwner();
     error NotTaker();
-    error OrderFilledOrCancelled();
+    error OrderAlreadyFilled();
     error OrderExpired();
     error MakingGtRemaining();
     error NotCrossing();
     error TooLittleTokensReceived();
     error MismatchedTokenIds();
-
-    /// @notice Emitted when an order is cancelled
-    event OrderCancelled(bytes32 indexed orderHash);
 
     /// @notice Emitted when an order is filled
     event OrderFilled(

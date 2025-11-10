@@ -178,9 +178,52 @@ contract CTFExchangeTest is BaseExchangeTest {
         exchange.fillOrder(order, 50_000_000);
 
         // attempting to fill this order again reverts
-        vm.expectRevert(OrderFilledOrCancelled.selector);
+        vm.expectRevert(OrderAlreadyFilled.selector);
         vm.prank(carla);
         exchange.fillOrder(order, 50_000_000);
+    }
+
+    function testValidateUserPaused() public {
+        Order memory order = _createAndSignOrder(bobPK, yes, 50_000_000, 100_000_000, Side.BUY);
+
+        uint256 blockInterval = exchange.userPauseBlockInterval();
+
+        vm.expectEmit(true, true, true, true);
+        emit UserPaused(bob, block.number + blockInterval);
+
+        vm.prank(bob);
+        exchange.pauseUser();
+
+        uint256 userPausedAt = exchange.userPausedBlockAt(bob);
+        assertEq(userPausedAt, block.number + exchange.userPauseBlockInterval());
+
+        // Advance 50 blocks in the future
+        advance(50);
+
+        // The user will not be paused yet
+        assertFalse(exchange.isUserPaused(bob));
+
+        // And the order is valid
+        exchange.validateOrder(order);
+
+        // Advance another 100 blocks in the future
+        advance(100);
+
+        // The user will be paused
+        assertTrue(exchange.isUserPaused(bob));
+
+        // And the order validation will correctly revert
+        vm.expectRevert(UserIsPaused.selector);
+        exchange.validateOrder(order);
+
+        // After unpausing the user will be unpaused and his order will be valid
+        vm.expectEmit(true, true, true, true);
+        emit UserUnpaused(bob);
+        vm.prank(bob);
+        exchange.unpauseUser();
+
+        assertFalse(exchange.isUserPaused(bob));
+        exchange.validateOrder(order);
     }
 
     function testValidateFeeTooHigh() public {
@@ -222,7 +265,7 @@ contract CTFExchangeTest is BaseExchangeTest {
         // Ensure the order status is as expected
         OrderStatus memory status = exchange.getOrderStatus(orderHash);
         assertEq(status.remaining, 25_000_000);
-        assertFalse(status.isFilledOrCancelled);
+        assertFalse(status.filled);
     }
 
     function testFillOrderPartial() public {
@@ -242,7 +285,7 @@ contract CTFExchangeTest is BaseExchangeTest {
         // Ensure the order status is as expected
         OrderStatus memory status = exchange.getOrderStatus(orderHash);
         assertEq(status.remaining, 0);
-        assertTrue(status.isFilledOrCancelled);
+        assertTrue(status.filled);
     }
 
     function testFillOrderWithFees() public {
@@ -271,7 +314,7 @@ contract CTFExchangeTest is BaseExchangeTest {
         // Ensure the order status is as expected
         OrderStatus memory status = exchange.getOrderStatus(orderHash);
         assertEq(status.remaining, 25_000_000);
-        assertFalse(status.isFilledOrCancelled);
+        assertFalse(status.filled);
     }
 
     function testFuzzFillOrderWithFees(uint128 fillAmount, uint16 feeRateBps) public {
@@ -439,76 +482,6 @@ contract CTFExchangeTest is BaseExchangeTest {
         vm.expectRevert(MakingGtRemaining.selector);
         vm.prank(carla);
         exchange.fillOrder(order, fillAmount);
-    }
-
-    function testCancelOrder(uint256 makerAmount, uint256 takerAmount, uint256 tokenId) public {
-        vm.assume(tokenId > 0);
-
-        Order memory order = _createAndSignOrder(bobPK, tokenId, makerAmount, takerAmount, Side.BUY);
-        bytes32 orderHash = exchange.hashOrder(order);
-
-        vm.expectEmit(true, true, true, true);
-        emit OrderCancelled(orderHash);
-        vm.prank(bob);
-        exchange.cancelOrder(order);
-    }
-
-    function testCancelOrders(uint256 makerAmount, uint256 takerAmount, uint256 tokenId) public {
-        vm.assume(tokenId > 0);
-
-        Order memory o1 = _createAndSignOrder(bobPK, tokenId, makerAmount, takerAmount, Side.BUY);
-        bytes32 o1Hash = exchange.hashOrder(o1);
-
-        Order memory o2 = _createAndSignOrder(bobPK, tokenId, makerAmount, takerAmount, Side.SELL);
-        bytes32 o2Hash = exchange.hashOrder(o2);
-
-        Order[] memory orders = new Order[](2);
-        orders[0] = o1;
-        orders[1] = o2;
-
-        vm.expectEmit(true, true, true, true);
-        emit OrderCancelled(o1Hash);
-        emit OrderCancelled(o2Hash);
-
-        vm.prank(bob);
-        exchange.cancelOrders(orders);
-    }
-
-    function testCancelOrderNotOwner() public {
-        Order memory order = _createAndSignOrder(bobPK, yes, 50_000_000, 100_000_000, Side.BUY);
-        vm.expectRevert(NotOwner.selector);
-        vm.prank(carla);
-        exchange.cancelOrder(order);
-    }
-
-    function testCancelOrderOrderFilledOrCancelled() public {
-        _mintTestTokens(bob, address(exchange), 1_000_000_000);
-        _mintTestTokens(carla, address(exchange), 1_000_000_000);
-
-        Order memory order = _createAndSignOrder(bobPK, yes, 50_000_000, 100_000_000, Side.BUY);
-
-        vm.prank(carla);
-        exchange.fillOrder(order, 50_000_000);
-
-        vm.expectRevert(OrderFilledOrCancelled.selector);
-        vm.prank(bob);
-        exchange.cancelOrder(order);
-    }
-
-    function testCancelOrderNonExistent() public {
-        Order memory order = _createAndSignOrder(bobPK, 1, 50_000_000, 100_000_000, Side.BUY);
-
-        // Cancelling a new order is valid, the order will now be unfillable
-        vm.prank(bob);
-        exchange.cancelOrder(order);
-
-        OrderStatus memory status = exchange.getOrderStatus(exchange.hashOrder(order));
-        assertTrue(status.isFilledOrCancelled);
-        assertEq(status.remaining, 0);
-
-        vm.expectRevert(OrderFilledOrCancelled.selector);
-        vm.prank(bob);
-        exchange.cancelOrder(order);
     }
 
     function testCalculateFeeBuy() public {
