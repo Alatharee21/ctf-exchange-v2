@@ -15,7 +15,7 @@ abstract contract Fees is IFees {
         return feeReceiver;
     }
 
-    /// @notice Returns the maximum fee rate for an order
+    /// @notice Validates that the operator fee does not exceed the maximum fee allowed by the order
     /// @param maxFee       - The maximum fee allowed for the order, signed by the user
     /// @param operatorFee  - The fee being charged to the order, by the operator
     function validateOrderFee(uint256 maxFee, uint256 operatorFee) public pure override {
