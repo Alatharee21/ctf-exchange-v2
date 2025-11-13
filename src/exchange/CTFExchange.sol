@@ -105,6 +105,8 @@ contract CTFExchange is
         _setUserPauseBlockInterval(_interval);
     }
 
+    /// @notice Sets a new fee receiver for the Exchange
+    /// @param receiver - The new fee receiver address
     function setFeeReceiver(address receiver) external onlyAdmin {
         _setFeeReceiver(receiver);
     }
