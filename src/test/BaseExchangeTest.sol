@@ -8,7 +8,7 @@ import { ERC1271Mock } from "./dev/mocks/ERC1271Mock.sol";
 
 import { Deployer } from "./dev/util/Deployer.sol";
 
-import { IERC1155 } from "lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155.sol";
+import { ERC1155 } from "lib/solady/src/tokens/ERC1155.sol";
 
 import { CTFExchange } from "src/exchange/CTFExchange.sol";
 import { IAuthEE } from "src/exchange/interfaces/IAuth.sol";
@@ -22,7 +22,14 @@ import { IUserPausableEE } from "src/exchange/interfaces/IUserPausable.sol";
 import { IConditionalTokens } from "src/exchange/interfaces/IConditionalTokens.sol";
 
 import { CalculatorHelper } from "src/exchange/libraries/CalculatorHelper.sol";
-import { Order, Side, SignatureType } from "src/exchange/libraries/Structs.sol";
+import {
+    ExchangeInitParams,
+    Order,
+    Side,
+    SignatureType,
+    UnsignedOrder,
+    ORDER_TYPEHASH
+} from "src/exchange/libraries/Structs.sol";
 
 contract BaseExchangeTest is
     TestHelper,
@@ -50,6 +57,7 @@ contract BaseExchangeTest is
     uint256 internal carlaPK = 0xCA414;
     address public bob;
     address public carla;
+    address public feeReceiver = address(9);
 
     ERC1271Mock public contractWallet;
 
@@ -62,10 +70,12 @@ contract BaseExchangeTest is
     );
 
     function setUp() public virtual {
+        vm.label(admin, "admin");
         bob = vm.addr(bobPK);
         vm.label(bob, "bob");
         carla = vm.addr(carlaPK);
         vm.label(carla, "carla");
+        vm.label(feeReceiver, "feeReceiver");
 
         usdc = new USDC();
         vm.label(address(usdc), "USDC");
@@ -80,7 +90,15 @@ contract BaseExchangeTest is
         contractWallet = new ERC1271Mock(carla);
 
         vm.startPrank(admin);
-        exchange = new CTFExchange(address(usdc), address(ctf), address(0), address(0));
+        ExchangeInitParams memory p = ExchangeInitParams({
+            collateral: address(usdc),
+            ctf: address(ctf),
+            proxyFactory: address(0),
+            safeFactory: address(0),
+            feeReceiver: feeReceiver
+        });
+
+        exchange = new CTFExchange(p);
         exchange.registerToken(yes, no, conditionId);
         exchange.addOperator(bob);
         exchange.addOperator(carla);
@@ -101,18 +119,19 @@ contract BaseExchangeTest is
         uint256 tokenId,
         uint256 makerAmount,
         uint256 takerAmount,
-        uint256 feeRateBps,
+        uint256 maxFee,
         Side side
-    ) internal returns (Order memory) {
+    ) internal view returns (Order memory) {
         address maker = vm.addr(pk);
         Order memory order = _createOrder(maker, tokenId, makerAmount, takerAmount, side);
-        order.feeRateBps = feeRateBps;
+        order.maxFee = maxFee;
         order.signature = _signMessage(pk, exchange.hashOrder(order));
         return order;
     }
 
     function _createAndSignOrder(uint256 pk, uint256 tokenId, uint256 makerAmount, uint256 takerAmount, Side side)
         internal
+        view
         returns (Order memory)
     {
         address maker = vm.addr(pk);
@@ -128,7 +147,7 @@ contract BaseExchangeTest is
         uint256 makerAmount,
         uint256 takerAmount,
         Side side
-    ) internal returns (Order memory) {
+    ) internal view returns (Order memory) {
         Order memory order = _createOrder(wallet, tokenId, makerAmount, takerAmount, side);
         order.signatureType = SignatureType.POLY_1271;
         order.signature = _signMessage(signerPk, exchange.hashOrder(order));
@@ -149,40 +168,90 @@ contract BaseExchangeTest is
             makerAmount: makerAmount,
             takerAmount: takerAmount,
             expiration: 0,
-            feeRateBps: 0,
+            maxFee: 0,
             signatureType: SignatureType.EOA,
             side: side,
+            timestamp: 0,
+            metadata: bytes32(0),
+            builder: bytes32(0),
             signature: new bytes(0)
         });
         return order;
     }
 
-    function _signMessage(uint256 pk, bytes32 message) internal returns (bytes memory sig) {
+    function _signMessage(uint256 pk, bytes32 message) internal pure returns (bytes memory sig) {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, message);
         sig = abi.encodePacked(r, s, v);
     }
 
-    function _mintTestTokens(address to, address spender, uint256 amount) internal {
+    function _generateOrderHash(address exchangeAddress, Order memory order) internal view returns (bytes32) {
+        bytes32 structHash = _getExpectedStructHash(order);
+        bytes32 domainSeparator = _getDomainSeparator(exchangeAddress);
+        bytes32 orderHash = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+        return orderHash;
+    }
+
+    function _getDomainSeparator(address exchangeAddress) internal view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("Polymarket CTF Exchange")),
+                keccak256(bytes("2")),
+                block.chainid,
+                exchangeAddress
+            )
+        );
+    }
+
+    function _getExpectedStructHash(Order memory order) internal pure returns (bytes32) {
+        UnsignedOrder memory o = UnsignedOrder({
+            salt: order.salt,
+            maker: order.maker,
+            signer: order.signer,
+            taker: order.taker,
+            tokenId: order.tokenId,
+            makerAmount: order.makerAmount,
+            takerAmount: order.takerAmount,
+            expiration: order.expiration,
+            maxFee: order.maxFee,
+            side: order.side,
+            signatureType: order.signatureType,
+            timestamp: order.timestamp,
+            metadata: order.metadata,
+            builder: order.builder
+        });
+
+        return keccak256(abi.encode(ORDER_TYPEHASH, o));
+    }
+
+    function dealUsdcAndApprove(address to, address spender, uint256 amount) internal {
+        vm.startPrank(to);
+        dealAndApprove(address(usdc), to, spender, amount);
+        vm.stopPrank();
+    }
+
+    function dealOutcomeTokensAndApprove(address to, address spender, uint256 tokenId, uint256 amount) internal {
+        vm.startPrank(admin);
+        approve(address(usdc), address(ctf), type(uint256).max);
+        deal(address(usdc), admin, amount);
+
         uint256[] memory partition = new uint256[](2);
         partition[0] = 1;
         partition[1] = 2;
 
-        vm.startPrank(to);
-        approve(address(usdc), address(ctf), type(uint256).max);
-
-        dealAndApprove(address(usdc), to, spender, amount);
-        IERC1155(address(ctf)).setApprovalForAll(spender, true);
-
-        uint256 splitAmount = amount / 2;
-        IConditionalTokens(ctf).splitPosition(address(usdc), bytes32(0), conditionId, partition, splitAmount);
+        IConditionalTokens(ctf).splitPosition(address(usdc), bytes32(0), conditionId, partition, amount);
+        ERC1155(address(ctf)).safeTransferFrom(admin, to, tokenId, amount, "");
         vm.stopPrank();
+
+        vm.prank(to);
+        ERC1155(address(ctf)).setApprovalForAll(spender, true);
     }
 
-    function assertCollateralBalance(address _who, uint256 _amount) public {
+    function assertCollateralBalance(address _who, uint256 _amount) public view {
         assertBalance(address(usdc), _who, _amount);
     }
 
-    function assertCTFBalance(address _who, uint256 _tokenId, uint256 _amount) public {
+    function assertCTFBalance(address _who, uint256 _tokenId, uint256 _amount) public view {
         assertBalance1155(address(ctf), _who, _tokenId, _amount);
     }
 
@@ -195,10 +264,10 @@ contract BaseExchangeTest is
     }
 
     function getCTFBalance(address _who, uint256 _tokenId) public view returns (uint256) {
-        return IERC1155(address(ctf)).balanceOf(_who, _tokenId);
+        return ERC1155(address(ctf)).balanceOf(_who, _tokenId);
     }
 
-    function assertBalance1155(address _token, address _who, uint256 _tokenId, uint256 _amount) public {
+    function assertBalance1155(address _token, address _who, uint256 _tokenId, uint256 _amount) public view {
         assertEq(getCTFBalance(_who, _tokenId), _checkpoints1155[_token][_who][_tokenId] + _amount);
     }
 
