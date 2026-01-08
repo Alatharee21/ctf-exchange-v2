@@ -187,6 +187,59 @@ contract CTFExchangeTest is BaseExchangeTest {
         assertEq(exchange.getFeeReceiver(), newFeeReceiver);
     }
 
+    function test_DefaultMaxFeeRate() public view {
+        // Default max fee rate should be 5% (500 bps)
+        assertEq(exchange.getMaxFeeRate(), 500);
+    }
+
+    function test_SetMaxFeeRate() public {
+        // 10% in bps
+        uint256 newMaxFeeRate = 1000;
+
+        vm.expectEmit(true, true, true, true);
+        emit MaxFeeRateUpdated(newMaxFeeRate);
+
+        vm.prank(admin);
+        exchange.setMaxFeeRate(newMaxFeeRate);
+
+        assertEq(exchange.getMaxFeeRate(), newMaxFeeRate);
+    }
+
+    function test_SetMaxFeeRate_revert_NotAdmin() public {
+        vm.expectRevert(NotAdmin.selector);
+        vm.prank(bob);
+        exchange.setMaxFeeRate(500);
+    }
+
+    function test_SetMaxFeeRate_revert_ExceedsCeiling() public {
+        // Cannot set rate >= 10000 bps (100%)
+        vm.expectRevert(MaxFeeRateExceedsCeiling.selector);
+        vm.prank(admin);
+        exchange.setMaxFeeRate(10000);
+    }
+
+    function test_ValidateFee() public view {
+        // Fee of 5 USDC on a 100 USDC trade = 5%, should pass
+        exchange.validateFee(5_000_000, 100_000_000);
+
+        // Fee of 4 USDC on a 100 USDC trade = 4%, should pass
+        exchange.validateFee(4_000_000, 100_000_000);
+    }
+
+    function test_ValidateFee_revert_FeeExceedsMaxRate() public {
+        // Fee of 6 USDC on a 100 USDC trade = 6%, should revert
+        vm.expectRevert(FeeExceedsMaxRate.selector);
+        exchange.validateFee(6_000_000, 100_000_000);
+    }
+
+    function test_ValidateFee_ZeroRate() public {
+        vm.prank(admin);
+        exchange.setMaxFeeRate(0);
+        assertEq(exchange.getMaxFeeRate(), 0);
+
+        exchange.validateFee(99_000_000, 100_000_000);
+    }
+
     function test_hashOrder() public view {
         Order memory order = _createOrder(bob, 1, 50_000_000, 100_000_000, Side.BUY);
 
@@ -303,11 +356,5 @@ contract CTFExchangeTest is BaseExchangeTest {
 
         assertFalse(exchange.isUserPaused(bob));
         exchange.validateOrder(order);
-    }
-
-    function test_ValidateOrderFee_revert_MaxFeeExceeded() public {
-        uint256 maxFillFee = 5_000_000; // max fill fee of 5 USDC
-        vm.expectRevert(MaxFeeExceeded.selector);
-        exchange.validateOrderFee(maxFillFee, 10_000_000); // operator fee of 10 USDC
     }
 }
