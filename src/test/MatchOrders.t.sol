@@ -81,7 +81,9 @@ contract MatchOrdersTest is BaseExchangeTest {
         makerFeeAmounts[1] = 0;
 
         vm.prank(admin);
-        exchange.matchOrders(takerOrder, makerOrders, 60_000_000, fillAmounts, takerFeeAmount, makerFeeAmounts);
+        exchange.matchOrders(
+            conditionId, takerOrder, makerOrders, 60_000_000, fillAmounts, takerFeeAmount, makerFeeAmounts
+        );
 
         // Ensure balances have been updated post match
         assertCollateralBalance(carla, 60_000_000);
@@ -127,7 +129,7 @@ contract MatchOrdersTest is BaseExchangeTest {
 
         vm.prank(admin);
         exchange.matchOrders(
-            takerOrder, makerOrders, takerOrderFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts
+            conditionId, takerOrder, makerOrders, takerOrderFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts
         );
 
         // Ensure balances have been updated post match
@@ -187,7 +189,7 @@ contract MatchOrdersTest is BaseExchangeTest {
 
         vm.prank(admin);
         exchange.matchOrders(
-            takerOrder, makerOrders, takerOrderFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts
+            conditionId, takerOrder, makerOrders, takerOrderFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts
         );
 
         // Ensure balances have been updated post match
@@ -276,7 +278,9 @@ contract MatchOrdersTest is BaseExchangeTest {
 
         // Match the orders
         vm.prank(admin);
-        exchange.matchOrders(takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts);
+        exchange.matchOrders(
+            conditionId, takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts
+        );
 
         // Assert state changes post match
         // Taker: YES BUY fully filled, receiving Outcome Tokens, spending Collateral + taker fee
@@ -362,7 +366,9 @@ contract MatchOrdersTest is BaseExchangeTest {
 
         // Match the orders
         vm.prank(admin);
-        exchange.matchOrders(takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts);
+        exchange.matchOrders(
+            conditionId, takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts
+        );
 
         // Assert state changes post match
         assertCTFBalance(bob, yes, 100_000_000);
@@ -441,7 +447,9 @@ contract MatchOrdersTest is BaseExchangeTest {
 
         // Match the orders
         vm.prank(admin);
-        exchange.matchOrders(takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts);
+        exchange.matchOrders(
+            conditionId, takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts
+        );
 
         // Assert state changes post match
         assertCTFBalance(bob, yes, 0);
@@ -520,7 +528,9 @@ contract MatchOrdersTest is BaseExchangeTest {
 
         // Match the orders
         vm.prank(admin);
-        exchange.matchOrders(takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts);
+        exchange.matchOrders(
+            conditionId, takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts
+        );
 
         // Assert state changes post match
         assertCTFBalance(bob, yes, 0);
@@ -567,7 +577,7 @@ contract MatchOrdersTest is BaseExchangeTest {
         emit Transfer(address(exchange), bob, expectedRefund);
 
         vm.prank(admin);
-        exchange.matchOrders(buy, makerOrders, takerFillAmount, fillAmounts, 0, makerFeeAmounts);
+        exchange.matchOrders(conditionId, buy, makerOrders, takerFillAmount, fillAmounts, 0, makerFeeAmounts);
 
         // Check state post match
         assertCollateralBalance(bob, expectedRefund);
@@ -607,7 +617,9 @@ contract MatchOrdersTest is BaseExchangeTest {
 
         vm.expectRevert(FeeExceedsProceeds.selector);
         vm.prank(admin);
-        exchange.matchOrders(takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts);
+        exchange.matchOrders(
+            conditionId, takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts
+        );
     }
 
     function test_MatchOrders_revert_NotCrossingSells() public {
@@ -635,7 +647,7 @@ contract MatchOrdersTest is BaseExchangeTest {
         // Sells can only match if priceYesSell + priceNoSell < 1
         vm.expectRevert(NotCrossing.selector);
         vm.prank(admin);
-        exchange.matchOrders(yesSell, makerOrders, takerOrderFillAmount, fillAmounts, 0, makerFeeAmounts);
+        exchange.matchOrders(conditionId, yesSell, makerOrders, takerOrderFillAmount, fillAmounts, 0, makerFeeAmounts);
     }
 
     function test_MatchOrders_revert_NotCrossingBuys() public {
@@ -663,7 +675,7 @@ contract MatchOrdersTest is BaseExchangeTest {
         // Buys can only match if priceYesBuy + priceNoBuy > 1
         vm.expectRevert(NotCrossing.selector);
         vm.prank(admin);
-        exchange.matchOrders(yesBuy, makerOrders, takerOrderFillAmount, fillAmounts, 0, makerFeeAmounts);
+        exchange.matchOrders(conditionId, yesBuy, makerOrders, takerOrderFillAmount, fillAmounts, 0, makerFeeAmounts);
     }
 
     function test_MatchOrders_revert_NotCrossingBuyVsSell() public {
@@ -690,7 +702,7 @@ contract MatchOrdersTest is BaseExchangeTest {
 
         vm.expectRevert(NotCrossing.selector);
         vm.prank(admin);
-        exchange.matchOrders(buy, makerOrders, takerOrderFillAmount, fillAmounts, 0, makerFeeAmounts);
+        exchange.matchOrders(conditionId, buy, makerOrders, takerOrderFillAmount, fillAmounts, 0, makerFeeAmounts);
     }
 
     function test_MatchOrders_revert_InvalidTrade() public {
@@ -715,7 +727,7 @@ contract MatchOrdersTest is BaseExchangeTest {
         // Attempt to match a yes buy with a no sell, reverts as this is invalid
         vm.expectRevert(MismatchedTokenIds.selector);
         vm.prank(admin);
-        exchange.matchOrders(buy, makerOrders, takerOrderFillAmount, fillAmounts, 0, makerFeeAmounts);
+        exchange.matchOrders(conditionId, buy, makerOrders, takerOrderFillAmount, fillAmounts, 0, makerFeeAmounts);
     }
 
     function test_MatchOrders_ZeroTakerAmount() public {
@@ -743,7 +755,7 @@ contract MatchOrdersTest is BaseExchangeTest {
 
         // The orders are successfully matched
         vm.prank(admin);
-        exchange.matchOrders(buy, makerOrders, takerOrderFillAmount, fillAmounts, 0, makerFeeAmounts);
+        exchange.matchOrders(conditionId, buy, makerOrders, takerOrderFillAmount, fillAmounts, 0, makerFeeAmounts);
     }
 
     function test_MatchOrders_revert_InvalidFillAmount() public {
@@ -770,7 +782,7 @@ contract MatchOrdersTest is BaseExchangeTest {
         // Reverts
         vm.expectRevert(MakingGtRemaining.selector);
         vm.prank(admin);
-        exchange.matchOrders(buy, makerOrders, takerOrderFillAmount, fillAmounts, 0, makerFeeAmounts);
+        exchange.matchOrders(conditionId, buy, makerOrders, takerOrderFillAmount, fillAmounts, 0, makerFeeAmounts);
     }
 
     function test_MatchOrders_revert_FeeExceedsMaxRate_Sell() public {
@@ -800,7 +812,9 @@ contract MatchOrdersTest is BaseExchangeTest {
 
         vm.expectRevert(FeeExceedsMaxRate.selector);
         vm.prank(admin);
-        exchange.matchOrders(takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts);
+        exchange.matchOrders(
+            conditionId, takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts
+        );
     }
 
     function test_MatchOrders_revert_FeeExceedsMaxRate_Buy() public {
@@ -830,7 +844,9 @@ contract MatchOrdersTest is BaseExchangeTest {
 
         vm.expectRevert(FeeExceedsMaxRate.selector);
         vm.prank(admin);
-        exchange.matchOrders(takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts);
+        exchange.matchOrders(
+            conditionId, takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts
+        );
     }
 
     function test_MatchOrders_WithMaxFeeRate_Sell() public {
@@ -861,7 +877,9 @@ contract MatchOrdersTest is BaseExchangeTest {
         checkpointCollateral(bob);
 
         vm.prank(admin);
-        exchange.matchOrders(takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts);
+        exchange.matchOrders(
+            conditionId, takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts
+        );
 
         // Bob should receive 50 USDC - 2.5 USDC fee = 47.5 USDC
         assertCollateralBalance(bob, 47_500_000);
@@ -893,7 +911,9 @@ contract MatchOrdersTest is BaseExchangeTest {
         checkpointCTF(bob, yes);
 
         vm.prank(admin);
-        exchange.matchOrders(takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts);
+        exchange.matchOrders(
+            conditionId, takerOrder, makerOrders, takerFillAmount, fillAmounts, takerFeeAmount, makerFeeAmounts
+        );
 
         // Bob should receive 100 YES tokens
         assertCTFBalance(bob, yes, 100_000_000);
