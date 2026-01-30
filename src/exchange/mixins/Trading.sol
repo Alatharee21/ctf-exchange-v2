@@ -97,6 +97,22 @@ abstract contract Trading is IFees, ITrading, IHashing, ISignatures, IAssetOpera
 
         (uint256 taking, bytes32 orderHash) =
             _performOrderChecks(takerOrder, takerFillAmount, takerFeeAmount, maxFeeRate);
+
+        // Check if all matches are COMPLEMENTARY (all makers have opposite side to taker)
+        if (_isAllComplementary(takerOrder.side, makerOrders)) {
+            _settleComplementary(
+                takerOrder,
+                makerOrders,
+                makerFillAmounts,
+                makerFeeAmounts,
+                maxFeeRate,
+                orderHash,
+                takerFillAmount,
+                takerFeeAmount
+            );
+            return;
+        }
+
         (uint256 makerAssetId, uint256 takerAssetId) = _deriveAssetIds(takerOrder);
 
         // Transfer takerOrder making amount from taker order to the Exchange
@@ -132,6 +148,137 @@ abstract contract Trading is IFees, ITrading, IHashing, ISignatures, IAssetOpera
 
         // Transfer taker SELL fee (if any) after events
         if (takerExchangeFee > 0) _transfer(address(this), getFeeReceiver(), 0, takerExchangeFee);
+    }
+
+    /// @notice Settles COMPLEMENTARY orders with direct peer-to-peer transfers
+    /// @dev Eliminates exchange as intermediary, saving ~3 transfers per match
+    function _settleComplementary(
+        Order memory takerOrder,
+        Order[] memory makerOrders,
+        uint256[] memory makerFillAmounts,
+        uint256[] memory makerFeeAmounts,
+        uint256 maxFeeRate,
+        bytes32 takerOrderHash,
+        uint256 takerFillAmount,
+        uint256 takerFeeAmount
+    ) internal {
+        address taker = takerOrder.maker;
+        bool takerIsBuy = takerOrder.side == Side.BUY;
+        uint256 totalMakerFees = 0;
+        uint256 totalTakerReceives = 0;
+
+        for (uint256 i = 0; i < makerOrders.length;) {
+            (uint256 makerFee, uint256 makerCollateral) = _settleComplementaryMaker(
+                takerOrder, makerOrders[i], makerFillAmounts[i], makerFeeAmounts[i], maxFeeRate, taker, takerIsBuy
+            );
+            unchecked {
+                totalMakerFees += makerFee;
+                totalTakerReceives += makerCollateral;
+                ++i;
+            }
+        }
+
+        // Batch transfer accumulated maker SELL fees from taker
+        if (totalMakerFees > 0) _transfer(taker, getFeeReceiver(), 0, totalMakerFees);
+
+        // Handle taker settlement
+        _settleComplementaryTaker(
+            takerOrder, taker, takerIsBuy, totalTakerReceives, takerOrderHash, takerFillAmount, takerFeeAmount
+        );
+    }
+
+    /// @notice Settles a single maker in COMPLEMENTARY match
+    /// @return makerFee - Fee to batch (for maker SELL only)
+    /// @return makerCollateral - Collateral received by exchange (for taker SELL only)
+    function _settleComplementaryMaker(
+        Order memory takerOrder,
+        Order memory makerOrder,
+        uint256 fillAmount,
+        uint256 feeAmount,
+        uint256 maxFeeRate,
+        address taker,
+        bool takerIsBuy
+    ) internal returns (uint256 makerFee, uint256 makerCollateral) {
+        _validateOrdersMatch(takerOrder, makerOrder, MatchType.COMPLEMENTARY);
+
+        (uint256 taking, bytes32 orderHash) = _performOrderChecks(makerOrder, fillAmount, feeAmount, maxFeeRate);
+
+        if (takerIsBuy) {
+            // Taker BUY ↔ Maker SELL: direct transfers both ways
+            _transfer(makerOrder.maker, taker, makerOrder.tokenId, fillAmount); // CTF: maker → taker
+            uint256 makerReceives = taking;
+            if (feeAmount > 0) {
+                if (feeAmount > taking) revert FeeExceedsProceeds();
+                unchecked {
+                    makerReceives -= feeAmount;
+                }
+                makerFee = feeAmount;
+                emit FeeCharged(getFeeReceiver(), feeAmount);
+            }
+            _transfer(taker, makerOrder.maker, 0, makerReceives); // Collateral: taker → maker
+        } else {
+            // Taker SELL ↔ Maker BUY: CTF direct, collateral through exchange
+            _transfer(taker, makerOrder.maker, takerOrder.tokenId, taking); // CTF: taker → maker
+            _transfer(makerOrder.maker, address(this), 0, fillAmount); // Collateral: maker → exchange
+            makerCollateral = fillAmount;
+            if (feeAmount > 0) _chargeFee(makerOrder.maker, feeAmount);
+        }
+
+        _emitOrderFilledEvent(
+            OrderFilledParams({
+                orderHash: orderHash,
+                maker: makerOrder.maker,
+                taker: taker,
+                side: makerOrder.side,
+                tokenId: makerOrder.tokenId,
+                makerAmountFilled: fillAmount,
+                takerAmountFilled: taking,
+                fee: feeAmount,
+                builder: makerOrder.builder,
+                metadata: makerOrder.metadata
+            })
+        );
+    }
+
+    /// @notice Settles taker in COMPLEMENTARY match
+    function _settleComplementaryTaker(
+        Order memory takerOrder,
+        address taker,
+        bool takerIsBuy,
+        uint256 totalTakerReceives,
+        bytes32 takerOrderHash,
+        uint256 takerFillAmount,
+        uint256 takerFeeAmount
+    ) internal {
+        if (takerIsBuy) {
+            if (takerFeeAmount > 0) _chargeFee(taker, takerFeeAmount);
+        } else {
+            uint256 takerProceeds = totalTakerReceives;
+            if (takerFeeAmount > 0) {
+                if (takerFeeAmount > totalTakerReceives) revert FeeExceedsProceeds();
+                unchecked {
+                    takerProceeds -= takerFeeAmount;
+                }
+                emit FeeCharged(getFeeReceiver(), takerFeeAmount);
+                _transfer(address(this), getFeeReceiver(), 0, takerFeeAmount);
+            }
+            _transfer(address(this), taker, 0, takerProceeds);
+        }
+
+        _emitTakerFilledEvents(
+            OrderFilledParams({
+                orderHash: takerOrderHash,
+                maker: taker,
+                taker: address(this),
+                side: takerOrder.side,
+                tokenId: takerOrder.tokenId,
+                makerAmountFilled: takerFillAmount,
+                takerAmountFilled: takerIsBuy ? takerFillAmount : totalTakerReceives,
+                fee: takerFeeAmount,
+                builder: takerOrder.builder,
+                metadata: takerOrder.metadata
+            })
+        );
     }
 
     /// @notice Settles a Taker order
@@ -384,6 +531,23 @@ abstract contract Trading is IFees, ITrading, IHashing, ISignatures, IAssetOpera
         if (takerOrder.side == Side.BUY && makerOrder.side == Side.BUY) return MatchType.MINT;
         if (takerOrder.side == Side.SELL && makerOrder.side == Side.SELL) return MatchType.MERGE;
         return MatchType.COMPLEMENTARY;
+    }
+
+    function _isAllComplementary(Side takerSide, Order[] memory makerOrders) internal pure returns (bool result) {
+        assembly {
+            result := 1
+            let length := mload(makerOrders)
+            let ptr := add(makerOrders, 0x20)
+            for { let i := 0 } lt(i, length) { i := add(i, 1) } {
+                let orderPtr := mload(add(ptr, shl(5, i)))
+                // side is at offset 0xC0 in Order struct
+                let side := mload(add(orderPtr, 0xC0))
+                if eq(side, takerSide) {
+                    result := 0
+                    break
+                }
+            }
+        }
     }
 
     function _deriveAssetIds(Order memory order) internal pure returns (uint256 makerAssetId, uint256 takerAssetId) {
