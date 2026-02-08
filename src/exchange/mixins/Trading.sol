@@ -1,19 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity <0.9.0;
 
-import { IFees } from "../interfaces/IFees.sol";
-import { IHashing } from "../interfaces/IHashing.sol";
 import { ITrading } from "../interfaces/ITrading.sol";
-import { ISignatures } from "../interfaces/ISignatures.sol";
 import { IUserPausable } from "../interfaces/IUserPausable.sol";
-import { IAssetOperations } from "../interfaces/IAssetOperations.sol";
 
 import { CalculatorHelper } from "../libraries/CalculatorHelper.sol";
 import { Order, Side, MatchType, OrderStatus } from "../libraries/Structs.sol";
 
+import { Hashing } from "./Hashing.sol";
+import { UserPausable } from "./UserPausable.sol";
+import { AssetOperations } from "./AssetOperations.sol";
+import { Fees } from "./Fees.sol";
+import { Signatures } from "./Signatures.sol";
+
 /// @title Trading
 /// @notice Implements logic for trading CTF assets
-abstract contract Trading is IFees, ITrading, IHashing, ISignatures, IAssetOperations, IUserPausable {
+abstract contract Trading is Hashing, AssetOperations, Fees, UserPausable, Signatures, ITrading {
     /// @notice Mapping of orders to their current status
     mapping(bytes32 => OrderStatus) public orderStatus;
 
@@ -93,7 +95,7 @@ abstract contract Trading is IFees, ITrading, IHashing, ISignatures, IAssetOpera
         uint256 takerFeeAmount,
         uint256[] memory makerFeeAmounts
     ) internal {
-        uint256 maxFeeRate = getMaxFeeRate();
+        uint256 maxFeeRate = maxFeeRateBps;
 
         (uint256 taking, bytes32 orderHash) =
             _performOrderChecks(takerOrder, takerFillAmount, takerFeeAmount, maxFeeRate);
@@ -528,9 +530,17 @@ abstract contract Trading is IFees, ITrading, IHashing, ISignatures, IAssetOpera
     }
 
     function _deriveMatchType(Order memory takerOrder, Order memory makerOrder) internal pure returns (MatchType) {
-        if (takerOrder.side == Side.BUY && makerOrder.side == Side.BUY) return MatchType.MINT;
-        if (takerOrder.side == Side.SELL && makerOrder.side == Side.SELL) return MatchType.MERGE;
-        return MatchType.COMPLEMENTARY;
+        // Enum values: Side.Buy: 0 Side.Sell 1
+        // Enum math: add one to the takerSide, and multiply it by 1 IF it's equal to the makerSide, OR
+        // multiply by zero if it isn't
+
+        MatchType matchType;
+        Side takerOrderSide = takerOrder.side;
+        Side makerOrderSide = makerOrder.side;
+        assembly ("memory-safe") {
+            matchType := mul(add(takerOrderSide, 1), eq(takerOrderSide, makerOrderSide))
+        }
+        return matchType;
     }
 
     function _isAllComplementary(Side takerSide, Order[] memory makerOrders) internal pure returns (bool result) {
@@ -551,8 +561,15 @@ abstract contract Trading is IFees, ITrading, IHashing, ISignatures, IAssetOpera
     }
 
     function _deriveAssetIds(Order memory order) internal pure returns (uint256 makerAssetId, uint256 takerAssetId) {
-        if (order.side == Side.BUY) return (0, order.tokenId);
-        return (order.tokenId, 0);
+        // SIDE * tokenId, tokenId - SIDE * tokenId
+        // buy: 0, tokenId
+        // sell: tokenId, 0
+        Side side = order.side;
+        uint256 tokenId = order.tokenId;
+        assembly ("memory-safe") {
+            makerAssetId := mul(side, tokenId)
+            takerAssetId := sub(tokenId, makerAssetId)
+        }
     }
 
     /// @notice Ensures the taker and maker orders can be matched against each other
@@ -610,7 +627,7 @@ abstract contract Trading is IFees, ITrading, IHashing, ISignatures, IAssetOpera
         }
     }
 
-    function _updateTakingWithSurplus(uint256 minimumAmount, uint256 tokenId) internal returns (uint256) {
+    function _updateTakingWithSurplus(uint256 minimumAmount, uint256 tokenId) internal view returns (uint256) {
         uint256 actualAmount = _getBalance(tokenId);
         if (actualAmount < minimumAmount) revert TooLittleTokensReceived();
         return actualAmount;

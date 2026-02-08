@@ -13,22 +13,30 @@ library CalculatorHelper {
         pure
         returns (uint256)
     {
-        if (makerAmount == 0) return 0;
-        return makingAmount * takerAmount / makerAmount;
-    }
-
-    function calculatePrice(Order memory order) internal pure returns (uint256) {
-        return _calculatePrice(order.makerAmount, order.takerAmount, order.side);
+        // division by zero in the EVM returns 0
+        uint256 result;
+        assembly ("memory-safe") {
+            result := div(mul(makingAmount, takerAmount), makerAmount)
+        }
+        return result;
     }
 
     function _calculatePrice(uint256 makerAmount, uint256 takerAmount, Side side) internal pure returns (uint256) {
-        if (side == Side.BUY) return takerAmount != 0 ? makerAmount * ONE / takerAmount : 0;
-        return makerAmount != 0 ? takerAmount * ONE / makerAmount : 0;
+        // If side is 0, (buy) swap makerAmount and takerAmount using xor involution: (A xor B xor B) = A
+        // 1. compute the "swap" makerAmount XOR takerAmount if side is SELL, otherwise zero
+        // 2. xor(makerAmount, swap) / xor(takerAmount, swap), if side is BUY, this is makerAmount / takerAmount
+        // and the opposite if side is SELL
+        uint256 result;
+        assembly ("memory-safe") {
+            let swap := mul(xor(makerAmount, takerAmount), side)
+            result := div(mul(xor(makerAmount, swap), ONE), xor(takerAmount, swap))
+        }
+        return result;
     }
 
     function isCrossing(Order memory a, Order memory b) internal pure returns (bool) {
-        uint256 priceA = calculatePrice(a);
-        uint256 priceB = calculatePrice(b);
+        uint256 priceA = _calculatePrice(a.makerAmount, a.takerAmount, a.side);
+        uint256 priceB = _calculatePrice(b.makerAmount, b.takerAmount, b.side);
 
         if (a.side == Side.SELL && b.side == Side.SELL) {
             if (a.takerAmount == 0) return priceB < ONE;
@@ -40,19 +48,30 @@ library CalculatorHelper {
     }
 
     function _isCrossing(uint256 priceA, uint256 priceB, Side sideA, Side sideB) internal pure returns (bool) {
-        if (sideA == Side.BUY) {
-            if (sideB == Side.BUY) {
-                // if a and b are bids
-                return priceA + priceB >= ONE;
+        bool result;
+        assembly ("memory-safe") {
+            switch eq(sideA, sideB)
+            case 0 {
+                // sideA and sideB are different, complementary order
+                // if A is BUY, priceA must be >= priceB
+                // if A is ASK, priceA must be <= priceB
+                // We have a simple XOR swap to do
+                let swap := mul(xor(priceA, priceB), sideA)
+                result := iszero(lt(xor(priceA, swap), xor(priceB, swap)))
             }
-            // if a is bid and b is ask
-            return priceA >= priceB;
+            case 1 {
+                // sideA and sideB are the same
+                // if BUY, sum must be >= 1 to merge (iszero(lessThan))
+                // if SELL, sum must be <= 1 to split (iszero(greaterThan))
+                let sum := add(priceA, priceB)
+                let lessThan := lt(sum, ONE)
+                let greaterThan := gt(sum, ONE)
+
+                // We only want to swap lessThan for greaterThan if sideA is 1 (SELL)
+                let swap := mul(xor(lessThan, greaterThan), sideA)
+                result := iszero(xor(lessThan, swap))
+            }
         }
-        if (sideB == Side.BUY) {
-            // if a is ask and b is bid
-            return priceB >= priceA;
-        }
-        // if a and b are asks
-        return priceA + priceB <= ONE;
+        return result;
     }
 }
