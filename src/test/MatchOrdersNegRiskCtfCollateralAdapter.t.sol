@@ -11,15 +11,19 @@ import { PolySafeFactoryMock } from "./dev/mocks/PolySafeFactoryMock.sol";
 
 import { Collateral, CollateralSetup } from "src/test/dev/CollateralSetup.sol";
 import { USDCe } from "src/test/dev/mocks/USDCe.sol";
-import { IConditionalTokens } from "src/exchange/interfaces/IConditionalTokens.sol";
+import { Deployer } from "src/test/dev/util/Deployer.sol";
+import { INegRiskAdapter } from "src/adapters/interfaces/INegRiskAdapter.sol";
 import { CTFHelpers } from "src/adapters/libraries/CTFHelpers.sol";
-import { CtfCollateralAdapter } from "src/adapters/CtfCollateralAdapter.sol";
+import { NegRiskCtfCollateralAdapter } from "src/adapters/NegRiskCtfCollateralAdapter.sol";
 
-contract MatchOrdersCtfCollateralAdapterTest is BaseExchangeTest {
-    CtfCollateralAdapter public adapter;
+contract MatchOrdersNegRiskCtfCollateralAdapterTest is BaseExchangeTest {
+    NegRiskCtfCollateralAdapter public adapter;
 
     Collateral collateral;
     USDCe usdce;
+
+    INegRiskAdapter negRiskAdapter;
+    address wrappedCol;
 
     function setUp() public override {
         super.setUp();
@@ -28,20 +32,37 @@ contract MatchOrdersCtfCollateralAdapterTest is BaseExchangeTest {
         collateral = CollateralSetup._deploy(admin);
         usdce = collateral.usdce;
 
-        // 2. Deploy real CtfCollateralAdapter
-        adapter = new CtfCollateralAdapter(address(ctf), address(collateral.token), address(usdce));
-        vm.label(address(adapter), "CtfCollateralAdapter");
+        // 2. Deploy NegRiskAdapter reusing the existing CTF from super.setUp()
+        address vault = vm.createWallet("nrVault").addr;
+        negRiskAdapter = INegRiskAdapter(Deployer.deployNegRiskAdapter(address(ctf), address(usdce), vault));
+        negRiskAdapter.addAdmin(admin);
+        negRiskAdapter.renounceAdmin();
+        wrappedCol = negRiskAdapter.wcol();
 
-        // 3. Grant ROLE_1 (1 << 1) on CollateralToken to the adapter
+        // 3. Deploy real NegRiskCtfCollateralAdapter
+        adapter = new NegRiskCtfCollateralAdapter(
+            address(ctf), address(collateral.token), address(usdce), address(negRiskAdapter)
+        );
+        vm.label(address(adapter), "NegRiskCtfCollateralAdapter");
+
+        // 4. Grant ROLE_1 (1 << 1) on CollateralToken to the adapter
         vm.prank(admin);
         collateral.token.grantRoles(address(adapter), 1 << 1);
 
-        // 4. Recompute yes/no using usdce (CtfCollateralAdapter uses usdce for position IDs)
-        uint256[] memory positionIds = CTFHelpers.positionIds(address(usdce), conditionId);
+        // 5. Prepare NegRisk market + question
+        bytes memory data = new bytes(0);
+        vm.startPrank(admin);
+        bytes32 marketId = negRiskAdapter.prepareMarket(0, data);
+        bytes32 questionId = negRiskAdapter.prepareQuestion(marketId, data);
+        conditionId = negRiskAdapter.getConditionId(questionId);
+        vm.stopPrank();
+
+        // 6. Recompute yes/no using wrappedCollateral
+        uint256[] memory positionIds = CTFHelpers.positionIds(wrappedCol, conditionId);
         yes = positionIds[0];
         no = positionIds[1];
 
-        // 5. Create new CTFExchange with collateral: collateralToken, outcomeTokenFactory: adapter
+        // 7. Create new CTFExchange with collateral: collateralToken, outcomeTokenFactory: adapter
         PolyProxyFactoryMock mockProxyFactory = new PolyProxyFactoryMock(address(0x1234));
         PolySafeFactoryMock mockSafeFactory = new PolySafeFactoryMock(address(0x5678));
 
@@ -79,8 +100,8 @@ contract MatchOrdersCtfCollateralAdapterTest is BaseExchangeTest {
         usdce.mint(admin, amount);
 
         vm.startPrank(admin);
-        usdce.approve(address(ctf), type(uint256).max);
-        IConditionalTokens(ctf).splitPosition(address(usdce), bytes32(0), conditionId, CTFHelpers.partition(), amount);
+        usdce.approve(address(negRiskAdapter), amount);
+        negRiskAdapter.splitPosition(conditionId, amount);
         ERC1155(address(ctf)).safeTransferFrom(admin, to, tokenId, amount, "");
         vm.stopPrank();
 
@@ -96,7 +117,7 @@ contract MatchOrdersCtfCollateralAdapterTest is BaseExchangeTest {
     //  Tests
     // ---------------------------------------------------------------
 
-    function test_MatchOrdersCtfCollateralAdapter_Mint() public {
+    function test_MatchOrdersNegRiskCtfCollateralAdapter_Mint() public {
         _dealCollateralAndApprove(bob, address(exchange), 50_000_000);
         _dealCollateralAndApprove(carla, address(exchange), 50_000_000);
 
@@ -125,7 +146,7 @@ contract MatchOrdersCtfCollateralAdapterTest is BaseExchangeTest {
         assertCTFBalance(carla, no, 100_000_000);
     }
 
-    function test_MatchOrdersCtfCollateralAdapter_Mint_Fees() public {
+    function test_MatchOrdersNegRiskCtfCollateralAdapter_Mint_Fees() public {
         uint256 takerFeeAmount = 2_500_000;
         uint256 makerFeeAmount = 100_000;
 
@@ -157,7 +178,7 @@ contract MatchOrdersCtfCollateralAdapterTest is BaseExchangeTest {
         assertPMCTBalance(feeReceiver, takerFeeAmount + makerFeeAmount);
     }
 
-    function test_MatchOrdersCtfCollateralAdapter_Complementary() public {
+    function test_MatchOrdersNegRiskCtfCollateralAdapter_Complementary() public {
         _dealCollateralAndApprove(bob, address(exchange), 50_000_000);
         _dealOutcomeTokensAndApprove(carla, address(exchange), yes, 100_000_000);
 
@@ -186,7 +207,7 @@ contract MatchOrdersCtfCollateralAdapterTest is BaseExchangeTest {
         assertPMCTBalance(carla, 50_000_000);
     }
 
-    function test_MatchOrdersCtfCollateralAdapter_Complementary_Fees() public {
+    function test_MatchOrdersNegRiskCtfCollateralAdapter_Complementary_Fees() public {
         uint256 takerFeeAmount = 2_500_000;
         uint256 makerFeeAmount = 100_000;
 
@@ -218,7 +239,7 @@ contract MatchOrdersCtfCollateralAdapterTest is BaseExchangeTest {
         assertPMCTBalance(feeReceiver, takerFeeAmount + makerFeeAmount);
     }
 
-    function test_MatchOrdersCtfCollateralAdapter_Merge() public {
+    function test_MatchOrdersNegRiskCtfCollateralAdapter_Merge() public {
         _dealOutcomeTokensAndApprove(bob, address(exchange), yes, 100_000_000);
         _dealOutcomeTokensAndApprove(carla, address(exchange), no, 100_000_000);
 
@@ -247,7 +268,7 @@ contract MatchOrdersCtfCollateralAdapterTest is BaseExchangeTest {
         assertPMCTBalance(carla, 50_000_000);
     }
 
-    function test_MatchOrdersCtfCollateralAdapter_Merge_Fees() public {
+    function test_MatchOrdersNegRiskCtfCollateralAdapter_Merge_Fees() public {
         uint256 takerFeeAmount = 1_000_000;
         uint256 makerFeeAmount = 500_000;
 
@@ -279,7 +300,7 @@ contract MatchOrdersCtfCollateralAdapterTest is BaseExchangeTest {
         assertPMCTBalance(feeReceiver, takerFeeAmount + makerFeeAmount);
     }
 
-    function test_MatchOrdersCtfCollateralAdapter_Merge_Reverts_WhenAdapterNotApproved() public {
+    function test_MatchOrdersNegRiskCtfCollateralAdapter_Merge_Reverts_WhenAdapterNotApproved() public {
         vm.prank(address(exchange));
         ERC1155(address(ctf)).setApprovalForAll(address(adapter), false);
 
@@ -307,11 +328,12 @@ contract MatchOrdersCtfCollateralAdapterTest is BaseExchangeTest {
         );
     }
 
-    function test_MatchOrdersCtfCollateralAdapter_Mint_Reverts_WhenAdapterUsdceMismatch() public {
+    function test_MatchOrdersNegRiskCtfCollateralAdapter_Mint_Reverts_WhenAdapterUsdceMismatch() public {
         USDCe otherUsdce = new USDCe();
 
-        CtfCollateralAdapter badAdapter =
-            new CtfCollateralAdapter(address(ctf), address(collateral.token), address(otherUsdce));
+        NegRiskCtfCollateralAdapter badAdapter = new NegRiskCtfCollateralAdapter(
+            address(ctf), address(collateral.token), address(otherUsdce), address(negRiskAdapter)
+        );
 
         vm.prank(admin);
         collateral.token.grantRoles(address(badAdapter), 1 << 1);
