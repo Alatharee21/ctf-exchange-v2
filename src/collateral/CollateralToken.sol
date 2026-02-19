@@ -18,7 +18,8 @@ abstract contract CollateralTokenEvents {
 
 /// @title CollateralToken
 /// @author Polymarket
-/// @notice ROLE_1: Wrapper/Unwrapper
+/// @notice ROLE_0: Admin
+/// @notice ROLE_1: Router
 contract CollateralToken is
     UUPSUpgradeable,
     Initializable,
@@ -30,14 +31,26 @@ contract CollateralToken is
 {
     using SafeTransferLib for address;
 
+    /*--------------------------------------------------------------
+                                 STATE
+    --------------------------------------------------------------*/
+
     address public immutable usdc;
     address public immutable usdce;
     address public immutable vault;
+
+    /*--------------------------------------------------------------
+                               MODIFIERS
+    --------------------------------------------------------------*/
 
     modifier onlyValidAsset(address _asset) {
         require(_asset == usdc || _asset == usdce, InvalidAsset());
         _;
     }
+
+    /*--------------------------------------------------------------
+                              CONSTRUCTOR
+    --------------------------------------------------------------*/
 
     constructor(address _usdc, address _usdce, address _vault) {
         usdc = _usdc;
@@ -47,12 +60,21 @@ contract CollateralToken is
         _disableInitializers();
     }
 
+    /*--------------------------------------------------------------
+                               INITIALIZE
+    --------------------------------------------------------------*/
+
     /// @notice Initializes the contract with the given owner.
     /// @dev This replaces the constructor for upgradeable contracts.
     /// @param _owner The address to set as the owner of the contract.
-    function initialize(address _owner) external initializer {
+    function initialize(address _owner, address _admin) external initializer {
         _initializeOwner(_owner);
+        _grantRoles(_admin, _ROLE_0);
     }
+
+    /*--------------------------------------------------------------
+                                  VIEW
+    --------------------------------------------------------------*/
 
     function name() public pure override returns (string memory) {
         return "PolyMarketCollateralToken";
@@ -66,6 +88,10 @@ contract CollateralToken is
         return 6;
     }
 
+    /*--------------------------------------------------------------
+                                EXTERNAL
+    --------------------------------------------------------------*/
+
     /// @notice Wraps a supported asset into the collateral token
     /// @param _asset The asset to wrap
     /// @param _to The address to wrap the asset to
@@ -74,7 +100,7 @@ contract CollateralToken is
     /// @dev The caller must have the ROLE_1 role
     /// @dev The asset must be transferred into this contract either before calling this function or
     ///      in the callback
-    function wrap(address _asset, address _to, uint256 _amount, bytes calldata _data)
+    function wrap(address _asset, address _to, uint256 _amount, address _callback, bytes calldata _data)
         external
         onlyRoles(_ROLE_1)
         onlyValidAsset(_asset)
@@ -83,7 +109,9 @@ contract CollateralToken is
         _mint(_to, _amount);
 
         // callback
-        ICollateralTokenCallbacks(msg.sender).wrapCallback(_asset, _to, _amount, _data);
+        if (_callback != address(0)) {
+            ICollateralTokenCallbacks(_callback).wrapCallback(_asset, _to, _amount, _data);
+        }
 
         // transfer asset to the vault
         _asset.safeTransfer(vault, _amount);
@@ -99,7 +127,7 @@ contract CollateralToken is
     /// @dev The caller must have the ROLE_1 role
     /// @dev The asset must be transferred into this contract either before calling this function or
     ///      in the callback
-    function unwrap(address _asset, address _to, uint256 _amount, bytes calldata _data)
+    function unwrap(address _asset, address _to, uint256 _amount, address _callback, bytes calldata _data)
         external
         onlyRoles(_ROLE_1)
         onlyValidAsset(_asset)
@@ -108,7 +136,9 @@ contract CollateralToken is
         _asset.safeTransferFrom(vault, _to, _amount);
 
         // callback
-        ICollateralTokenCallbacks(msg.sender).unwrapCallback(_asset, _to, _amount, _data);
+        if (_callback != address(0)) {
+            ICollateralTokenCallbacks(_callback).unwrapCallback(_asset, _to, _amount, _data);
+        }
 
         // burn
         _burn(address(this), _amount);
@@ -116,8 +146,40 @@ contract CollateralToken is
         emit Unwrapped(msg.sender, _asset, _to, _amount);
     }
 
+    /*--------------------------------------------------------------
+                               ONLY ADMIN
+    --------------------------------------------------------------*/
+
+    /// @notice Adds a new admin to the contract
+    /// @param _admin The address of the new admin
+    function addAdmin(address _admin) external onlyRoles(_ROLE_0) {
+        _grantRoles(_admin, _ROLE_0);
+    }
+
+    /// @notice Removes an admin from the contract
+    /// @param _admin The address of the admin to remove
+    function removeAdmin(address _admin) external onlyRoles(_ROLE_0) {
+        _removeRoles(_admin, _ROLE_0);
+    }
+
+    /// @notice Adds a new router to the contract
+    /// @param _router The address of the new router
+    function addRouter(address _router) external onlyRoles(_ROLE_0) {
+        _grantRoles(_router, _ROLE_1);
+    }
+
+    /// @notice Removes a router from the contract
+    /// @param _router The address of the router to remove
+    function removeRouter(address _router) external onlyRoles(_ROLE_0) {
+        _removeRoles(_router, _ROLE_1);
+    }
+
+    /*--------------------------------------------------------------
+                          UUPS UPGRADE AUTHORIZATION
+    --------------------------------------------------------------*/
+
     /// @dev Authorizes an upgrade to a new implementation.
     /// @dev Only the owner can authorize upgrades.
-    /// @param newImplementation The address of the new implementation contract.
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner { }
+    /// @param _newImplementation The address of the new implementation contract.
+    function _authorizeUpgrade(address _newImplementation) internal override onlyOwner { }
 }
