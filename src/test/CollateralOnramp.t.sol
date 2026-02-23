@@ -78,30 +78,25 @@ contract CollateralOnrampTest is TestHelper {
     }
 
     function test_Pausable_unpause() public {
-        // First pause USDC
         vm.prank(owner);
         collateral.onramp.pause(address(usdc));
 
         uint256 amount = 100_000_000;
         usdc.mint(alice, amount);
 
-        // Verify that wrapping is blocked when paused
         vm.startPrank(alice);
         usdc.approve(address(collateral.onramp), amount);
         vm.expectRevert(CollateralErrors.OnlyUnpaused.selector);
         collateral.onramp.wrap(address(usdc), alice, amount);
         vm.stopPrank();
 
-        // Now unpause USDC
         vm.prank(owner);
         collateral.onramp.unpause(address(usdc));
 
-        // Wrapping should now work
         vm.startPrank(alice);
         collateral.onramp.wrap(address(usdc), alice, amount);
         vm.stopPrank();
 
-        // Verify successful wrap
         assertEq(usdc.balanceOf(alice), 0);
         assertEq(usdc.balanceOf(collateral.vault), amount);
         assertEq(collateral.token.balanceOf(alice), amount);

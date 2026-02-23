@@ -7,6 +7,8 @@ import { CollateralErrors } from "src/collateral/abstract/CollateralErrors.sol";
 import { Collateral, CollateralSetup, USDC, USDCe } from "src/test/dev/CollateralSetup.sol";
 
 contract CollateralOfframpTest is TestHelper {
+    error Unauthorized();
+
     address owner = alice;
 
     Collateral collateral;
@@ -26,9 +28,7 @@ contract CollateralOfframpTest is TestHelper {
         vm.startPrank(alice);
         usdc.approve(address(collateral.onramp), amount);
         collateral.onramp.wrap(address(usdc), alice, amount);
-        vm.stopPrank();
 
-        vm.startPrank(alice);
         collateral.token.approve(address(collateral.offramp), amount);
         collateral.offramp.unwrap(address(usdc), alice, amount);
         vm.stopPrank();
@@ -45,9 +45,7 @@ contract CollateralOfframpTest is TestHelper {
         vm.startPrank(alice);
         usdce.approve(address(collateral.onramp), amount);
         collateral.onramp.wrap(address(usdce), alice, amount);
-        vm.stopPrank();
 
-        vm.startPrank(alice);
         collateral.token.approve(address(collateral.offramp), amount);
         collateral.offramp.unwrap(address(usdce), alice, amount);
         vm.stopPrank();
@@ -93,5 +91,39 @@ contract CollateralOfframpTest is TestHelper {
         vm.expectRevert(CollateralErrors.OnlyUnpaused.selector);
         collateral.offramp.unwrap(address(usdce), alice, amount);
         vm.stopPrank();
+    }
+
+    function test_Pausable_unpause() public {
+        uint256 amount = 100_000_000;
+        usdc.mint(alice, amount);
+
+        vm.startPrank(alice);
+        usdc.approve(address(collateral.onramp), amount);
+        collateral.onramp.wrap(address(usdc), alice, amount);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        collateral.offramp.pause(address(usdc));
+
+        vm.startPrank(alice);
+        collateral.token.approve(address(collateral.offramp), amount);
+        vm.expectRevert(CollateralErrors.OnlyUnpaused.selector);
+        collateral.offramp.unwrap(address(usdc), alice, amount);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        collateral.offramp.unpause(address(usdc));
+
+        vm.prank(alice);
+        collateral.offramp.unwrap(address(usdc), alice, amount);
+
+        assertEq(usdc.balanceOf(alice), amount);
+        assertEq(collateral.token.balanceOf(alice), 0);
+    }
+
+    function test_revert_Pausable_pause_unauthorized() public {
+        vm.prank(brian);
+        vm.expectRevert(Unauthorized.selector);
+        collateral.offramp.pause(address(usdc));
     }
 }

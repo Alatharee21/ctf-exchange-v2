@@ -11,11 +11,13 @@ import { CollateralVault } from "src/test/dev/mocks/CollateralVault.sol";
 import { CollateralToken } from "src/collateral/CollateralToken.sol";
 import { CollateralOnramp } from "src/collateral/CollateralOnramp.sol";
 import { CollateralOfframp } from "src/collateral/CollateralOfframp.sol";
+import { PermissionedRamp } from "src/collateral/PermissionedRamp.sol";
 
 struct Collateral {
     CollateralToken token;
     CollateralOnramp onramp;
     CollateralOfframp offramp;
+    PermissionedRamp permissionedRamp;
     USDC usdc;
     USDCe usdce;
     address vault;
@@ -48,14 +50,14 @@ library CollateralSetup {
         collateral.token = CollateralToken(collateralProxy);
         collateral.token.initialize(_owner, _admin);
 
-        collateral.onramp = new CollateralOnramp(_admin, address(collateral.token));
-        collateral.offramp = new CollateralOfframp(_admin, address(collateral.token));
+        collateral.onramp = new CollateralOnramp(_owner, _admin, address(collateral.token));
+        collateral.offramp = new CollateralOfframp(_owner, _admin, address(collateral.token));
+        collateral.permissionedRamp = new PermissionedRamp(_owner, _admin, address(collateral.token));
 
         vm.startPrank(_admin);
         collateral.token.addRouter(address(collateral.onramp));
         collateral.token.addRouter(address(collateral.offramp));
-        collateral.onramp.grantRoles(_admin, ADMIN_ROLE);
-        collateral.offramp.grantRoles(_admin, ADMIN_ROLE);
+        collateral.token.addRouter(address(collateral.permissionedRamp));
         vm.stopPrank();
 
         vm.startPrank(_owner);
