@@ -18,8 +18,8 @@ abstract contract CollateralTokenEvents {
 
 /// @title CollateralToken
 /// @author Polymarket
-/// @notice ROLE_0: Admin
-/// @notice ROLE_1: Router
+/// @notice ROLE_0: Minter/Burner
+/// @notice ROLE_1: Wrapper/Unwrapper
 contract CollateralToken is
     UUPSUpgradeable,
     Initializable,
@@ -38,6 +38,13 @@ contract CollateralToken is
     address public immutable usdc;
     address public immutable usdce;
     address public immutable vault;
+
+    /*--------------------------------------------------------------
+                               CONSTANTS
+    --------------------------------------------------------------*/
+
+    uint256 internal constant MINTER_ROLE = _ROLE_0;
+    uint256 internal constant WRAPPER_ROLE = _ROLE_1;
 
     /*--------------------------------------------------------------
                                MODIFIERS
@@ -61,15 +68,14 @@ contract CollateralToken is
     }
 
     /*--------------------------------------------------------------
-                               INITIALIZE
+                              INITIALIZE
     --------------------------------------------------------------*/
 
     /// @notice Initializes the contract with the given owner.
     /// @dev This replaces the constructor for upgradeable contracts.
     /// @param _owner The address to set as the owner of the contract.
-    function initialize(address _owner, address _admin) external initializer {
+    function initialize(address _owner) external initializer {
         _initializeOwner(_owner);
-        _grantRoles(_admin, _ROLE_0);
     }
 
     /*--------------------------------------------------------------
@@ -89,28 +95,45 @@ contract CollateralToken is
     }
 
     /*--------------------------------------------------------------
-                                EXTERNAL
+                               EXTERNAL
     --------------------------------------------------------------*/
+
+    /// @notice Mints a new collateral token
+    /// @param _to The address to mint the collateral token to
+    /// @param _amount The amount of collateral token to mint
+    /// @dev The caller must have the MINTER_ROLE
+    function mint(address _to, uint256 _amount) external onlyRoles(MINTER_ROLE) {
+        _mint(_to, _amount);
+    }
+
+    /// @notice Burns a collateral token
+    /// @param _amount The amount of collateral token to burn
+    /// @dev The caller must have the MINTER_ROLE
+    function burn(uint256 _amount) external onlyRoles(MINTER_ROLE) {
+        _burn(msg.sender, _amount);
+    }
 
     /// @notice Wraps a supported asset into the collateral token
     /// @param _asset The asset to wrap
     /// @param _to The address to wrap the asset to
     /// @param _amount The amount of asset to wrap
+    /// @param _callbackReceiver Address to receive the callback, or address(0) to skip callback
+    /// @param _data Callback data
     /// @notice The asset must be a supported asset
-    /// @dev The caller must have the ROLE_1 role
+    /// @dev The caller must have the WRAPPER_ROLE
     /// @dev The asset must be transferred into this contract either before calling this function or
     ///      in the callback
-    function wrap(address _asset, address _to, uint256 _amount, address _callback, bytes calldata _data)
+    function wrap(address _asset, address _to, uint256 _amount, address _callbackReceiver, bytes calldata _data)
         external
-        onlyRoles(_ROLE_1)
+        onlyRoles(WRAPPER_ROLE)
         onlyValidAsset(_asset)
     {
         // mint
         _mint(_to, _amount);
 
-        // callback
-        if (_callback != address(0)) {
-            ICollateralTokenCallbacks(_callback).wrapCallback(_asset, _to, _amount, _data);
+        // callback (skip if address(0))
+        if (_callbackReceiver != address(0)) {
+            ICollateralTokenCallbacks(_callbackReceiver).wrapCallback(_asset, _to, _amount, _data);
         }
 
         // transfer asset to the vault
@@ -123,21 +146,23 @@ contract CollateralToken is
     /// @param _asset The asset to unwrap
     /// @param _to The address to unwrap the asset to
     /// @param _amount The amount of asset to unwrap
+    /// @param _callbackReceiver Address to receive the callback, or address(0) to skip callback
+    /// @param _data Callback data
     /// @notice The asset must be a supported asset
-    /// @dev The caller must have the ROLE_1 role
+    /// @dev The caller must have the WRAPPER_ROLE
     /// @dev The asset must be transferred into this contract either before calling this function or
     ///      in the callback
-    function unwrap(address _asset, address _to, uint256 _amount, address _callback, bytes calldata _data)
+    function unwrap(address _asset, address _to, uint256 _amount, address _callbackReceiver, bytes calldata _data)
         external
-        onlyRoles(_ROLE_1)
+        onlyRoles(WRAPPER_ROLE)
         onlyValidAsset(_asset)
     {
         // transfer asset from the vault
         _asset.safeTransferFrom(vault, _to, _amount);
 
-        // callback
-        if (_callback != address(0)) {
-            ICollateralTokenCallbacks(_callback).unwrapCallback(_asset, _to, _amount, _data);
+        // callback (skip if address(0))
+        if (_callbackReceiver != address(0)) {
+            ICollateralTokenCallbacks(_callbackReceiver).unwrapCallback(_asset, _to, _amount, _data);
         }
 
         // burn
@@ -147,31 +172,23 @@ contract CollateralToken is
     }
 
     /*--------------------------------------------------------------
-                               ONLY ADMIN
+                            ROLE MANAGEMENT
     --------------------------------------------------------------*/
 
-    /// @notice Adds a new admin to the contract
-    /// @param _admin The address of the new admin
-    function addAdmin(address _admin) external onlyRoles(_ROLE_0) {
-        _grantRoles(_admin, _ROLE_0);
+    function addMinter(address _minter) external onlyOwner {
+        _grantRoles(_minter, MINTER_ROLE);
     }
 
-    /// @notice Removes an admin from the contract
-    /// @param _admin The address of the admin to remove
-    function removeAdmin(address _admin) external onlyRoles(_ROLE_0) {
-        _removeRoles(_admin, _ROLE_0);
+    function removeMinter(address _minter) external onlyOwner {
+        _removeRoles(_minter, MINTER_ROLE);
     }
 
-    /// @notice Adds a new router to the contract
-    /// @param _router The address of the new router
-    function addRouter(address _router) external onlyRoles(_ROLE_0) {
-        _grantRoles(_router, _ROLE_1);
+    function addWrapper(address _wrapper) external onlyOwner {
+        _grantRoles(_wrapper, WRAPPER_ROLE);
     }
 
-    /// @notice Removes a router from the contract
-    /// @param _router The address of the router to remove
-    function removeRouter(address _router) external onlyRoles(_ROLE_0) {
-        _removeRoles(_router, _ROLE_1);
+    function removeWrapper(address _wrapper) external onlyOwner {
+        _removeRoles(_wrapper, WRAPPER_ROLE);
     }
 
     /*--------------------------------------------------------------
@@ -188,6 +205,6 @@ contract CollateralToken is
 
     /// @dev Authorizes an upgrade to a new implementation.
     /// @dev Only the owner can authorize upgrades.
-    /// @param _newImplementation The address of the new implementation contract.
-    function _authorizeUpgrade(address _newImplementation) internal override onlyOwner { }
+    /// @param newImplementation The address of the new implementation contract.
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner { }
 }
