@@ -290,6 +290,15 @@ contract CTFExchangeTest is BaseExchangeTest {
         exchange.validateOrder(takerOrder);
     }
 
+    function test_CTFExchange_supportsInterface() public view {
+        // ERC1155TokenReceiver interface
+        assertTrue(exchange.supportsInterface(0x4e2312e0));
+        // ERC165 interface
+        assertTrue(exchange.supportsInterface(0x01ffc9a7));
+        // Unsupported interface
+        assertFalse(exchange.supportsInterface(0xdeadbeef));
+    }
+
     function test_CTFExchange_matchOrders_revert_NoMakerOrders() public {
         Order memory takerOrder = _createAndSignOrder(bobPK, yes, 50_000_000, 100_000_000, Side.BUY);
         Order[] memory makerOrders = new Order[](0);
@@ -350,6 +359,23 @@ contract CTFExchangeTest is BaseExchangeTest {
         vm.prank(admin);
         exchange.setUserPauseBlockInterval(302_400);
         assertEq(exchange.userPauseBlockInterval(), 302_400);
+    }
+
+    function test_CTFExchange_UserPaused_ExactBoundaryBlock() public {
+        Order memory order = _createAndSignOrder(bobPK, yes, 50_000_000, 100_000_000, Side.BUY);
+
+        vm.prank(bob);
+        exchange.pauseUser();
+
+        uint256 pausedAt = exchange.userPausedBlockAt(bob);
+
+        // Advance to exactly blockPausedAt (not one past it)
+        vm.roll(pausedAt);
+
+        // User should be paused at exactly blockPausedAt (>= check)
+        assertTrue(exchange.isUserPaused(bob));
+        vm.expectRevert(UserIsPaused.selector);
+        exchange.validateOrder(order);
     }
 
     function test_CTFExchange_ValidateOrder_UserPaused() public {
