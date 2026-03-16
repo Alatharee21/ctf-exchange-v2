@@ -84,6 +84,8 @@ abstract contract Trading is Hashing, AssetOperations, Events, Fees, UserPausabl
         uint256 takerFeeAmount,
         uint256[] memory makerFeeAmounts
     ) internal {
+        require(makerOrders.length > 0, NoMakerOrders());
+
         // Validate all tokenIds are valid positions for this conditionId
         _validateTokenIds(conditionId, takerOrder, makerOrders);
         // Check if all matches are COMPLEMENTARY (all makers have opposite side to taker)
@@ -107,12 +109,21 @@ abstract contract Trading is Hashing, AssetOperations, Events, Fees, UserPausabl
 
         _transfer(takerOrder.maker, address(this), makerAssetId, takerFillAmount);
 
-        uint256 makerExchangeFees =
-            _settleMakerOrders(conditionId, takerOrder, makerOrders, makerFillAmounts, makerFeeAmounts);
+        // Settle maker orders with delta-based surplus (prevents pre-existing balance inflation)
+        {
+            uint256 balanceBefore = _getBalance(takerAssetId);
 
-        if (makerExchangeFees > 0) _transfer(address(this), getFeeReceiver(), 0, makerExchangeFees);
+            uint256 makerExchangeFees =
+                _settleMakerOrders(conditionId, takerOrder, makerOrders, makerFillAmounts, makerFeeAmounts);
 
-        taking = _updateTakingWithSurplus(taking, takerAssetId);
+            // Batch transfer maker SELL fees before taker settlement (so refund logic doesn't see them as leftover)
+            if (makerExchangeFees > 0) _transfer(address(this), getFeeReceiver(), 0, makerExchangeFees);
+
+            uint256 balanceAfter = _getBalance(takerAssetId);
+            require(balanceAfter >= taking + balanceBefore, TooLittleTokensReceived());
+            // Actual taking amount
+            taking = balanceAfter - balanceBefore;
+        }
 
         uint256 takerExchangeFee =
             _settleTakerOrder(takerOrder.side, taking, takerOrder.maker, makerAssetId, takerAssetId, takerFeeAmount);
@@ -300,17 +311,25 @@ abstract contract Trading is Hashing, AssetOperations, Events, Fees, UserPausabl
 
         _transfer(takerOrder.maker, address(this), makerAssetId, takerFillAmount + takerFeeAmount);
 
-        uint256 batchedExchangeFees =
-            _settleMakerOrders(conditionId, takerOrder, makerOrders, makerFillAmounts, makerFeeAmounts);
+        // Settle maker orders with delta-based surplus (prevents pre-existing balance inflation)
+        {
+            uint256 balanceBefore = _getBalance(takerAssetId);
 
-        if (takerFeeAmount > 0) {
-            batchedExchangeFees += takerFeeAmount;
-            _emitFeeCharged(getFeeReceiver(), takerFeeAmount);
+            uint256 batchedExchangeFees =
+                _settleMakerOrders(conditionId, takerOrder, makerOrders, makerFillAmounts, makerFeeAmounts);
+
+            if (takerFeeAmount > 0) {
+                batchedExchangeFees += takerFeeAmount;
+                _emitFeeCharged(getFeeReceiver(), takerFeeAmount);
+            }
+
+            if (batchedExchangeFees > 0) _transfer(address(this), getFeeReceiver(), 0, batchedExchangeFees);
+
+            uint256 balanceAfter = _getBalance(takerAssetId);
+            require(balanceAfter >= taking + balanceBefore, TooLittleTokensReceived());
+            taking = balanceAfter - balanceBefore;
         }
 
-        if (batchedExchangeFees > 0) _transfer(address(this), getFeeReceiver(), 0, batchedExchangeFees);
-
-        taking = _updateTakingWithSurplus(taking, takerAssetId);
         _settleTakerOrder(takerOrder.side, taking, takerOrder.maker, makerAssetId, takerAssetId, 0);
 
         _emitTakerFilledEvents(
@@ -694,11 +713,5 @@ abstract contract Trading is Hashing, AssetOperations, Events, Fees, UserPausabl
             let packed := or(shl(8, remaining), iszero(remaining))
             sstore(status.slot, packed)
         }
-    }
-
-    function _updateTakingWithSurplus(uint256 minimumAmount, uint256 tokenId) internal view returns (uint256) {
-        uint256 actualAmount = _getBalance(tokenId);
-        require(actualAmount >= minimumAmount, TooLittleTokensReceived());
-        return actualAmount;
     }
 }
