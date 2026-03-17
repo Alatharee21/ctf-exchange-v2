@@ -22,7 +22,7 @@ abstract contract Signatures is ISignatures, PolyFactoryHelper {
     /// @param order     - The order
     function _preapproveOrder(bytes32 orderHash, Order memory order) internal {
         require(
-            isValidSignature(order.signer, order.maker, orderHash, order.signature, order.signatureType),
+            _isValidSignature(order.signer, order.maker, orderHash, order.signature, order.signatureType),
             InvalidSignature()
         );
 
@@ -46,10 +46,10 @@ abstract contract Signatures is ISignatures, PolyFactoryHelper {
     /// @param order     - The order
     function validateOrderSignature(bytes32 orderHash, Order memory order) public view override {
         if (order.signature.length == 0) {
-            require(isPreapproved(orderHash), InvalidSignature());
+            require(_isPreapproved(orderHash), InvalidSignature());
         } else {
             require(
-                isValidSignature(order.signer, order.maker, orderHash, order.signature, order.signatureType),
+                _isValidSignature(order.signer, order.maker, orderHash, order.signature, order.signatureType),
                 InvalidSignature()
             );
         }
@@ -65,7 +65,7 @@ abstract contract Signatures is ISignatures, PolyFactoryHelper {
     /// @param structHash       - The hash of the struct being verified
     /// @param signature        - The signature to be verified
     /// @param signatureType    - The signature type to be verified
-    function isValidSignature(
+    function _isValidSignature(
         address signer,
         address associated,
         bytes32 structHash,
@@ -74,16 +74,16 @@ abstract contract Signatures is ISignatures, PolyFactoryHelper {
     ) internal view returns (bool) {
         if (signatureType == SignatureType.EOA) {
             // EOA
-            return verifyEOASignature(signer, associated, structHash, signature);
+            return _verifyEOASignature(signer, associated, structHash, signature);
         } else if (signatureType == SignatureType.POLY_GNOSIS_SAFE) {
             // POLY_GNOSIS_SAFE
-            return verifyPolySafeSignature(signer, associated, structHash, signature);
+            return _verifyPolySafeSignature(signer, associated, structHash, signature);
         } else if (signatureType == SignatureType.POLY_1271) {
             // POLY_1271
-            return verifyPoly1271Signature(signer, associated, structHash, signature);
+            return _verifyPoly1271Signature(signer, associated, structHash, signature);
         } else {
             // POLY_PROXY
-            return verifyPolyProxySignature(signer, associated, structHash, signature);
+            return _verifyPolyProxySignature(signer, associated, structHash, signature);
         }
     }
 
@@ -95,12 +95,12 @@ abstract contract Signatures is ISignatures, PolyFactoryHelper {
     /// @param maker       - The address of the maker
     /// @param structHash  - The hash of the struct being verified
     /// @param signature   - The signature to be verified
-    function verifyEOASignature(address signer, address maker, bytes32 structHash, bytes memory signature)
+    function _verifyEOASignature(address signer, address maker, bytes32 structHash, bytes memory signature)
         internal
         view
         returns (bool)
     {
-        return (signer == maker) && verifyECDSASignature(signer, structHash, signature);
+        return (signer == maker) && _verifyECDSASignature(signer, structHash, signature);
     }
 
     /// @notice Verifies an ECDSA signature
@@ -108,7 +108,7 @@ abstract contract Signatures is ISignatures, PolyFactoryHelper {
     /// @param signer      - Address of the signer
     /// @param structHash  - The hash of the struct being verified
     /// @param signature   - The signature to be verified
-    function verifyECDSASignature(address signer, bytes32 structHash, bytes memory signature)
+    function _verifyECDSASignature(address signer, bytes32 structHash, bytes memory signature)
         internal
         view
         returns (bool)
@@ -124,12 +124,12 @@ abstract contract Signatures is ISignatures, PolyFactoryHelper {
     /// @param proxyWallet  - Address of the poly proxy wallet
     /// @param structHash   - Hash of the struct being verified
     /// @param signature    - Signature to be verified
-    function verifyPolyProxySignature(address signer, address proxyWallet, bytes32 structHash, bytes memory signature)
+    function _verifyPolyProxySignature(address signer, address proxyWallet, bytes32 structHash, bytes memory signature)
         internal
         view
         returns (bool)
     {
-        return verifyECDSASignature(signer, structHash, signature) && getProxyWalletAddress(signer) == proxyWallet;
+        return _verifyECDSASignature(signer, structHash, signature) && getProxyWalletAddress(signer) == proxyWallet;
     }
 
     /// @notice Verifies a signature signed by a Polymarket Gnosis safe
@@ -140,12 +140,12 @@ abstract contract Signatures is ISignatures, PolyFactoryHelper {
     /// @param safeAddress - Address of the safe
     /// @param hash        - Hash of the struct being verified
     /// @param signature   - Signature to be verified
-    function verifyPolySafeSignature(address signer, address safeAddress, bytes32 hash, bytes memory signature)
+    function _verifyPolySafeSignature(address signer, address safeAddress, bytes32 hash, bytes memory signature)
         internal
         view
         returns (bool)
     {
-        return verifyECDSASignature(signer, hash, signature) && getSafeWalletAddress(signer) == safeAddress;
+        return _verifyECDSASignature(signer, hash, signature) && getSafeWalletAddress(signer) == safeAddress;
     }
 
     /// @notice Verifies a signature signed by a smart contract
@@ -153,7 +153,7 @@ abstract contract Signatures is ISignatures, PolyFactoryHelper {
     /// @param maker            - Address of the 1271 smart contract
     /// @param hash             - Hash of the struct being verified
     /// @param signature        - Signature to be verified
-    function verifyPoly1271Signature(address signer, address maker, bytes32 hash, bytes memory signature)
+    function _verifyPoly1271Signature(address signer, address maker, bytes32 hash, bytes memory signature)
         internal
         view
         returns (bool)
@@ -162,7 +162,7 @@ abstract contract Signatures is ISignatures, PolyFactoryHelper {
             && SignatureCheckerLib.isValidSignatureNow(maker, hash, signature);
     }
 
-    function isPreapproved(bytes32 orderHash) internal view returns (bool) {
+    function _isPreapproved(bytes32 orderHash) internal view returns (bool) {
         return preapproved[orderHash];
     }
 }
